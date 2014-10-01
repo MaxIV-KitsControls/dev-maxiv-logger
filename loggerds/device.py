@@ -16,14 +16,11 @@ EVENT_MEMBERS = ["timestamp", "level", "device", "message", "ndc", "thread"]
 class Logger(Device):
 
     """A Tango device whose sole purpose is to wait for someone to tell
-    it to send things to Logstash. It works as a standard Tango log
+    it to send things to Elasticsearch. It works as a standard Tango log
     receiver as well as a specialized PyAlarm receiver.
 
-    It requires Logstash to be configured to listen with the zeromq plugin.
-
-    TODO: there is currently no checking to see that data is actually
-    entered into the database. I'm thinking that it might better idea
-    to access Elasticsearch directly and skip Logstash entirely.
+    It tries to make sure that events aren't lost even if Elasticsearch
+    temporarily goes away.
     """
 
     __metaclass__ = DeviceMeta
