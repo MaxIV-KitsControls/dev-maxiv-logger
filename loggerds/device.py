@@ -121,7 +121,7 @@ class Logger(Device):
         it easy to prune old data.
         """
         date = time.strftime('%Y.%m.%d', time.localtime())
-        index = "tango-{}-{}".format(group, date)
+        index = "tango-{0}-{1}".format(group, date)
         return index
 
     def _queue_item(self, item):
@@ -132,7 +132,7 @@ class Logger(Device):
             self.set_state(DevState.FAULT)
             self._status["queue"] = "Queue full - losing data!"
         else:
-            self._status["queue"] = "There are around {} queued events.".format(self.queue.qsize())
+            self._status["queue"] = "There are around {0} queued events.".format(self.queue.qsize())
         if not self.sender.is_alive():
             self.start_sender()
             self._status["thread_restarts"] += 1
@@ -142,16 +142,16 @@ class Logger(Device):
         self.set_status(self._make_status())
 
     def _make_status(self):
-        status = ["Device is in {} state.".format(self.get_state())]
-        status.append("Number of events written to database: {}".format(self._status["n_logged_events"]))
+        status = ["Device is in {0} state.".format(self.get_state())]
+        status.append("Number of events written to database: {0}".format(self._status["n_logged_events"]))
         if self._status["queue"]:
             status.append(self._status["queue"])
         if self._status["es"]:
-            status.append("Elasticsearch status: {}".format(self._status["es"]))
+            status.append("Elasticsearch status: {0}".format(self._status["es"]))
         if self._status["es_error"]:
-            status.append("Elasticsearch error: {}".format(self._status["es_error"]))
+            status.append("Elasticsearch error: {0}".format(self._status["es_error"]))
         if self._status["thread_restarts"]:
-            status.append("Internal thread restarted {} times.").format(self._status["thread_restarts"])
+            status.append("Internal thread restarted {0} times.").format(self._status["thread_restarts"])
         return "\n".join(status)
 
     @DebugIt()
