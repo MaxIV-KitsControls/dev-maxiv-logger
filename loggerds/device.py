@@ -1,3 +1,4 @@
+import datetime
 import json
 import time
 #import zmq
@@ -10,8 +11,95 @@ from elasticsearch import ConnectionError
 from PyTango.server import run, Device, DeviceMeta, attribute, command, device_property
 from PyTango import DevState, DebugIt
 
-EVENT_MEMBERS = ["timestamp", "level", "device", "message", "ndc", "thread"]
+EVENT_MEMBERS = ["@timestamp", "level", "device", "message", "ndc", "thread"]
 
+# Mappings for ElasticSearch. Not strictly necessary, but makes it easier wo work with
+# timestamps. Also searches should be more efficient.
+es_mappings = {
+    "log": {
+        "log": {
+            "properties": {
+                "@timestamp": {
+                    "format": "dateOptionalTime",
+                    "type": "date"
+                },
+                "level": {
+                    "type": "string"
+                },
+                "device": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "ndc": {
+                    "type": "string"
+                },
+                "thread": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "alarm": {
+        "alarm": {
+            "properties": {
+                "@timestamp": {
+                    "format": "dateOptionalTime",
+                    "type": "date"
+                },
+                "alarm_tag": {
+                    "index": "not_analyzed",
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "device": {
+                    #"index": "not_analyzed",
+                    "type": "string"
+                },
+                "formula": {
+                    "index": "not_analyzed",
+                    "type": "string"
+                },
+                "host": {
+                    "index": "not_analyzed",
+                    "type": "string"
+                },
+                "instance": {
+                    "index": "not_analyzed",
+                    "type": "string"
+                },
+                "message": {
+                    #"index": "not_analyzed",
+                    "type": "string"
+                },
+                "priority": {
+                    "type": "integer"
+                },
+                "severity": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "format": "dateOptionalTime",
+                    "type": "date"
+                },
+                "values": {
+                    "properties": {
+                        "attribute": {
+                            "index": "not_analyzed",
+                            "type": "string"
+                        },
+                        # "value": {
+                        #   a  "type": "double"
+                        # }
+                    }
+                }
+            }
+        }
+    }
+}
 
 class Logger(Device):
 
@@ -61,7 +149,6 @@ class Logger(Device):
 
     def delete_device(self):
         self._running = False
-        self.sender.join()
 
     def _start_sender(self):
         if not (self.sender and self.sender.is_alive()):
@@ -73,6 +160,9 @@ class Logger(Device):
         and sending them to be indexed by Elasticsearch."""
 
         self._running = True
+
+        existing_indices = set()
+
         while self._running:
 
             self.update_status()
@@ -83,7 +173,7 @@ class Logger(Device):
                     self.set_state(DevState.ALARM)
                 self._status["es"] = "Not responding; is it down?"
                 self.update_status()
-                time.sleep(30)
+                time.sleep(self.PushPeriod)
                 continue
             else:
                 self._status["es"] = "Appears to be in working order."
@@ -96,6 +186,14 @@ class Logger(Device):
 
             if events:
                 self._status["queue"] = None
+                # check if the indices exist; otherwise we create them with the correct
+                # mapping. Is there a better way to do this? Anyway, this should only
+                # happen once a day.
+                for event in events:
+                    if event._index not in existing_indices:
+                        existing_indices.add(index)
+                        if not es.exists(event._index):
+                            es.indices.create(index, {"mappings": es_mappings[event._type]})
                 try:
                     helpers.bulk(self.es, events)  # send all the events to ES
                     self._status["n_logged_events"] += len(events)
@@ -159,7 +257,6 @@ class Logger(Device):
     def Log(self, event):
         "Send a Tango log event to Elasticsearch"
         source = dict(zip(EVENT_MEMBERS, event))
-        source["@timestamp"] = int(source.get("timestamp", time.time() * 1000))
         data = {
             "_id": str(uuid4()),  # create a unique document ID
             "_type": "log",
@@ -173,7 +270,11 @@ class Logger(Device):
     def Alarm(self, event):
         "Send a PyAlarm event to Elasticsearch"
         source = json.loads(event)
-        source["@timestamp"] = int(source.get("timestamp", time.time() * 1000))
+
+        # we want a @timestamp field for Kibana to work...
+        if "timestamp" in source:
+            source["@timestamp"] = int(source.pop("timestamp"))
+
         data = {
             "_id": str(uuid4()),  # create a unique document ID
             "_type": "alarm",
@@ -186,15 +287,17 @@ class Logger(Device):
     def TestAlarm(self, message):
         "Send a test alarm event."
         event = {
-            "timestamp": int(time.time() * 1000),
+            "@timestamp": time.time() * 1000,
             "description": message,
             "device": "just/testing/1",
             "formula": "This is a test",
             "message": "TESTING",
-            "values": {"some/device/1/attribute": 76},
+            "values": [{"attribute": "some/device/1/attribute", "value": 76}],
             "alarm_tag": "logger_device_test",
             "severity": "DEBUG",
+            "priority": 0,
             "host": "test-host-1",
+            "instance": str(uuid4())
         }
         self.Alarm(json.dumps(event))
 
