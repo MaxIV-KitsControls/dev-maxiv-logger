@@ -190,10 +190,10 @@ class Logger(Device):
                 # mapping. Is there a better way to do this? Anyway, this should only
                 # happen once a day.
                 for event in events:
-                    if event._index not in existing_indices:
-                        existing_indices.add(index)
-                        if not es.exists(event._index):
-                            es.indices.create(index, {"mappings": es_mappings[event._type]})
+                    if event["_index"] not in existing_indices:
+                        existing_indices.add(event["_index"])
+                        if not self.es.indices.exists(event["_index"]):
+                            self.es.indices.create(index, {"mappings": es_mappings[event["_type"]]})
                 try:
                     helpers.bulk(self.es, events)  # send all the events to ES
                     self._status["n_logged_events"] += len(events)
