@@ -193,7 +193,7 @@ class Logger(Device):
                     if event["_index"] not in existing_indices:
                         existing_indices.add(event["_index"])
                         if not self.es.indices.exists(event["_index"]):
-                            self.es.indices.create(index, {"mappings": es_mappings[event["_type"]]})
+                            self.es.indices.create(event["_index"], {"mappings": es_mappings[event["_type"]]})
                 try:
                     helpers.bulk(self.es, events)  # send all the events to ES
                     self._status["n_logged_events"] += len(events)
