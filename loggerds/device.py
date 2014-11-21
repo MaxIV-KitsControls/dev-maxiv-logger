@@ -12,8 +12,9 @@ from PyTango.server import run, Device, DeviceMeta, attribute, command, device_p
 from PyTango import DevState, DebugIt
 
 EVENT_MEMBERS = ["@timestamp", "level", "device", "message", "ndc", "thread"]
+ALARM_PRIORITIES = {"ALARM": 400, "WARNING": 300, "INFO": 200, "DEBUG": 100}
 
-# Mappings for ElasticSearch. Not strictly necessary, but makes it easier wo work with
+# Mappings for ElasticSearch. Not strictly necessary, but makes it easier to work with
 # timestamps. Also searches should be more efficient.
 es_mappings = {
     "log": {
@@ -33,10 +34,10 @@ es_mappings = {
                     "type": "string"
                 },
                 "ndc": {
-                    "type": "string"
+                    "type": "string"  # integer?
                 },
                 "thread": {
-                    "type": "string"
+                    "type": "string"  # integer?
                 }
             }
         }
@@ -85,6 +86,17 @@ es_mappings = {
                     "format": "dateOptionalTime",
                     "type": "date"
                 },
+                "active_since": {
+                    "format": "dateOptionalTime",
+                    "type": "date"
+                },
+                "recovered_at": {
+                    "format": "dateOptionalTime",
+                    "type": "date"
+                },
+                "user_comment": {
+                    "type": "string"
+                },
                 "values": {
                     "properties": {
                         "attribute": {
@@ -92,7 +104,7 @@ es_mappings = {
                             "type": "string"
                         },
                         # "value": {
-                        #   a  "type": "double"
+                        #     "type": "double"
                         # }
                     }
                 }
@@ -274,6 +286,9 @@ class Logger(Device):
         # we want a @timestamp field for Kibana to work...
         if "timestamp" in source:
             source["@timestamp"] = int(source.pop("timestamp"))
+
+        # make sure there is a priority
+        source["priority"] = ALARM_PRIORITIES.get(str(source["severity"]).upper(), 0)
 
         data = {
             "_id": str(uuid4()),  # create a unique document ID
