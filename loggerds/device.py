@@ -1,6 +1,7 @@
 import datetime
 import json
 import time
+
 #import zmq
 from uuid import uuid4
 from Queue import Queue, Empty, Full
@@ -103,15 +104,33 @@ es_mappings = {
                             "index": "not_analyzed",
                             "type": "string"
                         },
-                        # "value": {
-                        #     "type": "double"
-                        # }
+                        "value": {
+                            "index": "not_analyzed",
+                            "type": "string"
+                        },
+                        "type": {
+                            "index": "not_analyzed",
+                            "type": "string"
+                        }
                     }
                 }
             }
         }
     }
 }
+
+
+def stringify_values(values):
+    """In order to fit well in ES, fields should have a consistent type.
+    Therefore we'll convert attribute values strings before sending
+    them, regardless of type. This is a bit crude, but in principle no
+    data should be lost (except possibly some precision)."""
+    # TODO: try to find a way to not have to do this...
+    return [{"attribute": value["attribute"],
+             "value": str(value["value"]),
+             "type": type(value["value"]).__name__}
+            for value in values]
+
 
 class Logger(Device):
 
@@ -140,8 +159,10 @@ class Logger(Device):
     def init_device(self):
 
         self._status = {}  # keep status info for various things
+        self._status["n_total_events"] = 0
         self._status["n_logged_events"] = 0
         self._status["thread_restarts"] = 0
+        self._status["n_errors"] = 0
 
         self.get_device_properties()
 
@@ -197,6 +218,7 @@ class Logger(Device):
                 events.append(self.queue.get(True))
 
             if events:
+                self._status["n_total_events"] += len(events)
                 self._status["queue"] = None
                 # check if the indices exist; otherwise we create them with the correct
                 # mapping. Is there a better way to do this? Anyway, this should only
@@ -207,8 +229,11 @@ class Logger(Device):
                         if not self.es.indices.exists(event["_index"]):
                             self.es.indices.create(event["_index"], {"mappings": es_mappings[event["_type"]]})
                 try:
-                    helpers.bulk(self.es, events)  # send all the events to ES
-                    self._status["n_logged_events"] += len(events)
+                    inserted, errors = helpers.bulk(self.es, events)  # send all the events to ES
+                    if errors:
+                        self._status["n_errors"] += errors
+                        self.error_stream(errors)
+                    self._status["n_logged_events"] += inserted
                     if self.get_state() is not DevState.RUNNING:
                         self.set_state(DevState.RUNNING)
                         self._status["es_error"] = None
@@ -223,6 +248,8 @@ class Logger(Device):
                     time.sleep(60)  # back off in case there's congestion
 
             time.sleep(self.PushPeriod)  # normal update period
+
+        self.info_stream("Sender thread stopped")
 
     def _get_index(self, group):
         """
@@ -241,9 +268,11 @@ class Logger(Device):
         except Full:
             self.set_state(DevState.FAULT)
             self._status["queue"] = "Queue full - losing data!"
+            del item
         else:
             self._status["queue"] = "There are around {0} queued events.".format(self.queue.qsize())
         if not self.sender.is_alive():
+            self.error_stream("Oops, the sender thread seems to have died! Restarting...")
             self.start_sender()
             self._status["thread_restarts"] += 1
         self.update_status()
@@ -253,7 +282,9 @@ class Logger(Device):
 
     def _make_status(self):
         status = ["Device is in {0} state.".format(self.get_state())]
+        status.append("Number of events handled: {0}".format(self._status["n_total_events"]))
         status.append("Number of events written to database: {0}".format(self._status["n_logged_events"]))
+        status.append("Number of failures to write to database: {0}".format(self._status["n_errors"]))
         if self._status["queue"]:
             status.append(self._status["queue"])
         if self._status["es"]:
@@ -268,14 +299,16 @@ class Logger(Device):
     @command(dtype_in=[str])
     def Log(self, event):
         "Send a Tango log event to Elasticsearch"
-        source = dict(zip(EVENT_MEMBERS, event))
-        data = {
-            "_id": str(uuid4()),  # create a unique document ID
-            "_type": "log",
-            "_index": self._get_index("logs"),
-            "_source": source
-        }
-        self._queue_item(data)
+        pass
+        # source = dict(zip(EVENT_MEMBERS, event))
+        # if not self.queue.full():
+        # data = {
+        #     "_id": str(uuid4()),  # create a unique document ID
+        #     "_type": "log",
+        #     "_index": self._get_index("logs"),
+        #     "_source": source
+        # }
+        # self._queue_item(data)
 
     @DebugIt()
     @command(dtype_in=str)
@@ -289,6 +322,9 @@ class Logger(Device):
 
         # make sure there is a priority
         source["priority"] = ALARM_PRIORITIES.get(str(source["severity"]).upper(), 0)
+
+        # slightly hacky way of making things fit the mapping
+        source["values"] = stringify_values(source["values"])
 
         data = {
             "_id": str(uuid4()),  # create a unique document ID
