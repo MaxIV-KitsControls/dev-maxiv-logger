@@ -21,12 +21,9 @@ es_mappings = {
     "log": {
         "log": {
             "properties": {
-		#"date_detection": "false",
                 "@timestamp": {
-		            "format" : "dateOptionalTime",
-		            "type": "date"
-                    #"format": "epoch_millis",
-                    #"store": "true"
+                    "type": "date",
+		            "format": "epoch_millis"
                 },
                 "level": {
                     "type": "string"
@@ -50,8 +47,9 @@ es_mappings = {
         "alarm": {
             "properties": {
                 "@timestamp": {
-                    "format": "dateOptionalTime",
-                    "type": "date"
+                    "type": "date",
+                    "format": "epoch_millis"
+                    #"format": "dateOptionalTime",
                 },
                 "alarm_tag": {
                     "index": "not_analyzed",
@@ -302,28 +300,20 @@ class Logger(Device):
     @command(dtype_in=[str])
     def Log(self, event):
         "Send a Tango log event to Elasticsearch"
-        #pass
         source = dict(zip(EVENT_MEMBERS, event))
+        # Edit the @timestamp value to the source list
+        #if "timestamp" in source:
+        #source["@timestamp"]= datetime.datetime.utcnow().isoformat() #send utc time and let kibana do the adjustments
+        source["@timestamp"]= int(datetime.datetime.now().strftime("%s"))*1000
+
         if not self.queue.full():
             data = {
                 "_id": str(uuid4()),  # create a unique document ID
                 "_type": "log",
                 "_index": self._get_index("logs"),
-                #"@timestamp": source["@timestamp"],
-	        "_source": source,
-		#"@timestamp" : datetime.datetime.now().isoformat()
-		#"@timestamp" : "{0}.000".format(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-		"@timestamp" : datetime.datetime.utcnow().isoformat() #send utc time and let kibana do the adjustments
-		#"@timestamp" : source["@timestamp"]
-                #"@timestamp" : int(datetime.datetime.now().strftime("%s"))*1000 
+	            "_source": source
             }
-	    source["@timestamp"]=data["@timestamp"]
-	    #source.pop("@timestamp")
             self._queue_item(data)
-	print '#'*80
-	print "source,data"
-	print source,data
-	print '#'*80
 
     @DebugIt()
     @command(dtype_in=str)
@@ -346,7 +336,6 @@ class Logger(Device):
             "_type": "alarm",
             "_index": self._get_index("alarms"),
             "_source": source
-            #"_timestamp" : source["@tamp"]
         }
         self._queue_item(data)
 
