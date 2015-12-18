@@ -59,7 +59,7 @@ es_mappings = {
                     "type": "string"
                 },
                 "device": {
-                    #"index": "not_analyzed",
+                    "index": "not_analyzed", #avoid 
                     "type": "string"
                 },
                 "formula": {
