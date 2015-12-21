@@ -22,13 +22,14 @@ es_mappings = {
         "log": {
             "properties": {
                 "@timestamp": {
-                    "type": "date",
-		            "format": "epoch_millis"
+                    "type": "date"
+		            #"format": "epoch_millis" #removing format for compatibility reasons with elasticsearch v1.x
                 },
                 "level": {
                     "type": "string"
                 },
                 "device": {
+                    "index": "not_analyzed",
                     "type": "string"
                 },
                 "message": {
@@ -47,9 +48,9 @@ es_mappings = {
         "alarm": {
             "properties": {
                 "@timestamp": {
-                    "type": "date",
-                    "format": "epoch_millis"
-                    #"format": "dateOptionalTime",
+                    "type": "date"
+                    #"format": "epoch_millis"
+                    #"format": "dateOptionalTime"
                 },
                 "alarm_tag": {
                     "index": "not_analyzed",
@@ -59,7 +60,7 @@ es_mappings = {
                     "type": "string"
                 },
                 "device": {
-                    "index": "not_analyzed", #avoid 
+                    "index": "not_analyzed",
                     "type": "string"
                 },
                 "formula": {
@@ -75,7 +76,6 @@ es_mappings = {
                     "type": "string"
                 },
                 "message": {
-                    #"index": "not_analyzed",
                     "type": "string"
                 },
                 "priority": {
@@ -302,8 +302,6 @@ class Logger(Device):
         "Send a Tango log event to Elasticsearch"
         source = dict(zip(EVENT_MEMBERS, event))
         # Edit the @timestamp value to the source list
-        #if "timestamp" in source:
-        #source["@timestamp"]= datetime.datetime.utcnow().isoformat() #send utc time and let kibana do the adjustments
         source["@timestamp"]= int(datetime.datetime.now().strftime("%s"))*1000
 
         if not self.queue.full():
