@@ -22,13 +22,14 @@ es_mappings = {
         "log": {
             "properties": {
                 "@timestamp": {
-                    "format": "dateOptionalTime",
                     "type": "date"
+		            #"format": "epoch_millis" #removing format for compatibility reasons with elasticsearch v1.x
                 },
                 "level": {
                     "type": "string"
                 },
                 "device": {
+                    "index": "not_analyzed",
                     "type": "string"
                 },
                 "message": {
@@ -47,8 +48,9 @@ es_mappings = {
         "alarm": {
             "properties": {
                 "@timestamp": {
-                    "format": "dateOptionalTime",
                     "type": "date"
+                    #"format": "epoch_millis"
+                    #"format": "dateOptionalTime"
                 },
                 "alarm_tag": {
                     "index": "not_analyzed",
@@ -58,7 +60,7 @@ es_mappings = {
                     "type": "string"
                 },
                 "device": {
-                    #"index": "not_analyzed",
+                    "index": "not_analyzed",
                     "type": "string"
                 },
                 "formula": {
@@ -74,7 +76,6 @@ es_mappings = {
                     "type": "string"
                 },
                 "message": {
-                    #"index": "not_analyzed",
                     "type": "string"
                 },
                 "priority": {
@@ -231,8 +232,8 @@ class Logger(Device):
                 try:
                     inserted, errors = helpers.bulk(self.es, events)  # send all the events to ES
                     if errors:
-                        self._status["n_errors"] += errors
-                        self.error_stream(errors)
+                        self._status["n_errors"] += len(errors)
+                        self.error_stream(str(errors))
                     self._status["n_logged_events"] += inserted
                     if self.get_state() is not DevState.RUNNING:
                         self.set_state(DevState.RUNNING)
@@ -254,7 +255,7 @@ class Logger(Device):
     def _get_index(self, group):
         """
         Generate a date based index name for elasticsearch, on the form
-        'tango-<group>-YYYY.MM.DD'. This is used by Kibana and should also make
+        'tango--<group>-YYYY.MM.DD'. This is used by Kibana and should also make
         it easy to prune old data.
         """
         date = time.strftime('%Y.%m.%d', time.localtime())
@@ -299,16 +300,18 @@ class Logger(Device):
     @command(dtype_in=[str])
     def Log(self, event):
         "Send a Tango log event to Elasticsearch"
-        pass
-        # source = dict(zip(EVENT_MEMBERS, event))
-        # if not self.queue.full():
-        # data = {
-        #     "_id": str(uuid4()),  # create a unique document ID
-        #     "_type": "log",
-        #     "_index": self._get_index("logs"),
-        #     "_source": source
-        # }
-        # self._queue_item(data)
+        source = dict(zip(EVENT_MEMBERS, event))
+        # Edit the @timestamp value to the source list
+        source["@timestamp"]= int(datetime.datetime.now().strftime("%s"))*1000
+
+        if not self.queue.full():
+            data = {
+                "_id": str(uuid4()),  # create a unique document ID
+                "_type": "log",
+                "_index": self._get_index("logs"),
+	            "_source": source
+            }
+            self._queue_item(data)
 
     @DebugIt()
     @command(dtype_in=str)
@@ -338,7 +341,7 @@ class Logger(Device):
     def TestAlarm(self, message):
         "Send a test alarm event."
         event = {
-            "@timestamp": time.time() * 1000,
+            "@timestamp": int(datetime.datetime.now().strftime("%s"))*1000, #time.time() * 1000,
             "description": message,
             "device": "just/testing/1",
             "formula": "This is a test",
