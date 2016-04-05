@@ -4,13 +4,11 @@ import json
 import time
 from uuid import uuid4
 from Queue import Queue, Full
-from threading import Thread, Event
 
-import elasticsearch
-# from elasticsearch import Elasticsearch, helpers
+from elasticsearch import Elasticsearch, helpers
 from elasticsearch import ConnectionError
-from PyTango.server import run, Device, DeviceMeta, attribute, command, device_property
-from PyTango import DevState, DebugIt
+from PyTango.server import run, Device, DeviceMeta, command, device_property
+from PyTango import DevState
 import PyTango
 
 from mapping import es_mappings
@@ -78,7 +76,7 @@ class Logger(Device):
         self.get_device_properties()
 
         # ES setup
-        self.es = elasticsearch.Elasticsearch(self.ElasticsearchHost)
+        self.es = Elasticsearch(self.ElasticsearchHost)
         self._status["es"] = "Not initialised."
         self._status["es_error"] = None
 
@@ -158,7 +156,7 @@ class Logger(Device):
                         self.info_stream("Created new index %s" % index)
             try:
                 # send all the events to ES
-                inserted, errors = elasticsearch.helpers.bulk(self.es, events)
+                inserted, errors = helpers.bulk(self.es, events)
                 if errors:
                     self._status["n_errors"] += len(errors)
                     self.error_stream(errors)

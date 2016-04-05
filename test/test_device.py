@@ -18,7 +18,7 @@ from loggerds import device as logger
 
 
 # Device test case
-class PowerSupplyTestCase(DeviceTestCase):
+class LoggerTestCase(DeviceTestCase):
     """Test case for power supply device server."""
 
     device = logger.Logger
@@ -27,11 +27,11 @@ class PowerSupplyTestCase(DeviceTestCase):
     @classmethod
     def mocking(cls):
         """Mock elasticsearch and some other modules"""
-        cls.elasticsearch = logger.elasticsearch = MagicMock()
+        cls.Elasticsearch = logger.Elasticsearch = MagicMock()
         cls.es = MagicMock()
+        cls.Elasticsearch.return_value = cls.es
         cls.indices = cls.es.indices
-        cls.helpers = cls.elasticsearch.helpers
-        cls.elasticsearch.Elasticsearch.return_value = cls.es
+        cls.helpers = logger.helpers = MagicMock()
         cls.uuid4 = logger.uuid4 = MagicMock()
         cls.uuid4.return_value = "uuid4"
         cls.time = logger.time = MagicMock()
@@ -42,7 +42,7 @@ class PowerSupplyTestCase(DeviceTestCase):
 
     def test_connects_to_es(self):
         host = self.properties["ElasticsearchHost"]
-        self.elasticsearch.Elasticsearch.assert_called_with(host)
+        self.Elasticsearch.assert_called_with(host)
 
     def test_alarms_if_es_unpingable(self):
         self.es.ping.return_value = False
