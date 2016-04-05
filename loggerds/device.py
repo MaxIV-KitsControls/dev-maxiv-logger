@@ -1,124 +1,23 @@
-import datetime
+import calendar
+from datetime import datetime
 import json
 import time
-
-#import zmq
 from uuid import uuid4
-from Queue import Queue, Empty, Full
-from threading import Thread
+from Queue import Queue, Full
+from threading import Thread, Event
 
-from elasticsearch import Elasticsearch, helpers
+import elasticsearch
+# from elasticsearch import Elasticsearch, helpers
 from elasticsearch import ConnectionError
 from PyTango.server import run, Device, DeviceMeta, attribute, command, device_property
 from PyTango import DevState, DebugIt
+import PyTango
+
+from mapping import es_mappings
+
 
 EVENT_MEMBERS = ["@timestamp", "level", "device", "message", "ndc", "thread"]
-ALARM_PRIORITIES = {"ALARM": 400, "WARNING": 300, "INFO": 200, "DEBUG": 100}
-
-# Mappings for ElasticSearch. Not strictly necessary, but makes it easier to work with
-# timestamps. Also searches should be more efficient.
-es_mappings = {
-    "log": {
-        "log": {
-            "properties": {
-                "@timestamp": {
-                    "type": "date"
-		            #"format": "epoch_millis" #removing format for compatibility reasons with elasticsearch v1.x
-                },
-                "level": {
-                    "type": "string"
-                },
-                "device": {
-                    "index": "not_analyzed",
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "ndc": {
-                    "type": "string"  # integer?
-                },
-                "thread": {
-                    "type": "string"  # integer?
-                }
-            }
-        }
-    },
-    "alarm": {
-        "alarm": {
-            "properties": {
-                "@timestamp": {
-                    "type": "date"
-                    #"format": "epoch_millis"
-                    #"format": "dateOptionalTime"
-                },
-                "alarm_tag": {
-                    "index": "not_analyzed",
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "device": {
-                    "index": "not_analyzed",
-                    "type": "string"
-                },
-                "formula": {
-                    "index": "not_analyzed",
-                    "type": "string"
-                },
-                "host": {
-                    "index": "not_analyzed",
-                    "type": "string"
-                },
-                "instance": {
-                    "index": "not_analyzed",
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "priority": {
-                    "type": "integer"
-                },
-                "severity": {
-                    "type": "string"
-                },
-                "timestamp": {
-                    "format": "dateOptionalTime",
-                    "type": "date"
-                },
-                "active_since": {
-                    "format": "dateOptionalTime",
-                    "type": "date"
-                },
-                "recovered_at": {
-                    "format": "dateOptionalTime",
-                    "type": "date"
-                },
-                "user_comment": {
-                    "type": "string"
-                },
-                "values": {
-                    "properties": {
-                        "attribute": {
-                            "index": "not_analyzed",
-                            "type": "string"
-                        },
-                        "value": {
-                            "index": "not_analyzed",
-                            "type": "string"
-                        },
-                        "type": {
-                            "index": "not_analyzed",
-                            "type": "string"
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+ALARM_PRIORITIES = {"ALARM": 400, "ERROR": 400, "WARNING": 300, "INFO": 200, "DEBUG": 100}
 
 
 def stringify_values(values):
@@ -131,6 +30,11 @@ def stringify_values(values):
              "value": str(value["value"]),
              "type": type(value["value"]).__name__}
             for value in values]
+
+
+def get_utc_now():
+    "Return the UTC epoch (seconds since 1970-01-01)"
+    return calendar.timegm(datetime.utcnow().utctimetuple())
 
 
 class Logger(Device):
@@ -148,12 +52,17 @@ class Logger(Device):
     ElasticsearchHost = device_property(dtype=str,
                                         default_value="localhost",
                                         doc="Address of the Elasticsearch host")
+    ElasticsearchIndexPrefix = device_property(dtype=str, default_value="tango",
+                                               doc="Prefix for the ES index names")
 
     QueueSize = device_property(dtype=int, default_value=1000,
                                 doc="The maximum number of events to buffer.")
 
-    PushPeriod = device_property(dtype=int, default_value=10,
-                                 doc="Number of seconds of sleep between emptying the queue.")
+    PushPeriod = device_property(
+        dtype=int, default_value=10,
+        doc="Number of seconds of sleep between emptying the queue into ES.")
+    DoNotPush = device_property(dtype=bool, default_value=False,
+                                doc="Don't push data to ES (for debugging)")
 
     sender = None
 
@@ -164,11 +73,12 @@ class Logger(Device):
         self._status["n_logged_events"] = 0
         self._status["thread_restarts"] = 0
         self._status["n_errors"] = 0
+        self._status["bad_events"] = 0
 
         self.get_device_properties()
 
         # ES setup
-        self.es = Elasticsearch(self.ElasticsearchHost)
+        self.es = elasticsearch.Elasticsearch(self.ElasticsearchHost)
         self._status["es"] = "Not initialised."
         self._status["es_error"] = None
 
@@ -176,89 +86,106 @@ class Logger(Device):
         self.queue = Queue(maxsize=self.QueueSize)
         self._status["queue"] = None
 
-        # start thread
-        self._start_sender()
+        self.existing_indices = set()
+        # start periodic push to ES
+        if not self.DoNotPush:
+            self.poll_command("PushQueuedEventsToES", int(self.PushPeriod * 1000))
 
-        self.set_state(DevState.ON)
+        self.set_state(DevState.INIT)
 
-    def delete_device(self):
-        self._running = False
-
-    def _start_sender(self):
-        if not (self.sender and self.sender.is_alive()):
-            self.sender = Thread(target=self._sender_thread)
-            self.sender.start()
-
-    def _sender_thread(self):
-        """Thread that runs all the time, periodically emptying the queue of events
-        and sending them to be indexed by Elasticsearch."""
-
-        self._running = True
-
-        existing_indices = set()
-
-        while self._running:
-
-            self.update_status()
-
+    def check_es_communication(self):
+        "Check that we can still talk to ES properly and update state/status"
+        try:
             if not self.es.ping():
                 # apparently ES is down so let's just wait; maybe it's just restarting
                 if self.get_state() is not DevState.FAULT:
                     self.set_state(DevState.ALARM)
-                self._status["es"] = "Not responding; is it down?"
+                    self._status["es"] = "Not responding; is it down?"
+                if not self.queue.empty():
+                    self._status["n_errors"] += 1
                 self.update_status()
-                time.sleep(self.PushPeriod)
-                continue
+                self.error_stream("Elasticsearch did not respond to ping")
+                # self.stopped.wait(self.PushPeriod)
+                return False
             else:
-                self._status["es"] = "Appears to be in working order."
-                self.set_status(self._make_status())
+                self.set_state(PyTango.DevState.ON)
+                self._status["es"] = "OK"
+                self._status["es_error"] = None
+                return True
+        except ConnectionError as e:
+            # This means we can't establish connection, perhaps not even lookup
+            self.set_state(DevState.FAULT)
+            self._status["es"] = "Cannot connect; is the address correct?"
+            if not self.queue.empty():
+                self._status["n_errors"] += 1
+                self._status["es_error"] = e
+            self.error_stream("Elasticsearch connection error: %r" % e)
+            self.update_status()
+            return False
+        else:
+            self.set_state(PyTango.DevState.ON)
+            self._status["es"] = "OK"
+            self._status["es_error"] = None
+            self.update_status()
+            return True
 
-            # Check if there's anything on the queue
-            events = []
-            while not self.queue.empty():
-                events.append(self.queue.get(True))
+    def _handle_events(self):
 
-            if events:
-                self._status["n_total_events"] += len(events)
-                self._status["queue"] = None
-                # check if the indices exist; otherwise we create them with the correct
-                # mapping. Is there a better way to do this? Anyway, this should only
-                # happen once a day.
-                for event in events:
-                    if event["_index"] not in existing_indices:
-                        existing_indices.add(event["_index"])
-                        if not self.es.indices.exists(event["_index"]):
-                            self.es.indices.create(event["_index"], {"mappings": es_mappings[event["_type"]]})
-                try:
-                    inserted, errors = helpers.bulk(self.es, events)  # send all the events to ES
-                    if errors:
-                        self._status["n_errors"] += len(errors)
-                        self.error_stream(str(errors))
-                    self._status["n_logged_events"] += inserted
-                    if self.get_state() is not DevState.RUNNING:
-                        self.set_state(DevState.RUNNING)
-                        self._status["es_error"] = None
-                        self.update_status()
-                except ConnectionError as ce:
-                    # There was a problem. Let's put the items back in the queue.
-                    for event in events:
-                        self._queue_item(event)
-                    self._status["es_error"] = ce
-                    self.set_state(DevState.ALARM)
+        """Check the queue for any arrived events and if any, push them to ES."""
+
+        if not self.check_es_communication():
+            self.debug_stream("Skipping push; could not talk to ES")
+            return  # no point in trying to send anything
+
+        # Check if there's anything on the queue
+        events = []
+        while not self.queue.empty():
+            events.append(self.queue.get(True))
+
+        if events:
+            self._status["n_total_events"] += len(events)
+            self._status["queue"] = None
+            # check if the indices exist; otherwise we create them
+            # with the correct mapping. Is there a better way to do
+            # this? Anyway, this should only happen once a day.
+            for event in events:
+                index = event["_index"]
+                if index not in self.existing_indices:
+                    self.existing_indices.add(index)
+                    if not self.es.indices.exists(index):
+                        self.es.indices.create(
+                            index, {"mappings": es_mappings[event["_type"]]})
+                        self.info_stream("Created new index %s" % index)
+            try:
+                # send all the events to ES
+                inserted, errors = elasticsearch.helpers.bulk(self.es, events)
+                if errors:
+                    self._status["n_errors"] += len(errors)
+                    self.error_stream(errors)
+                else:
+                    self.debug_stream("Pushed %d events to ES" % len(inserted))
+                self._status["n_logged_events"] += inserted
+                if self.get_state() is not DevState.ON:
+                    self.set_state(DevState.ON)
+                    self._status["es_error"] = None
                     self.update_status()
-                    time.sleep(60)  # back off in case there's congestion
-
-            time.sleep(self.PushPeriod)  # normal update period
-
-        self.info_stream("Sender thread stopped")
+            except Exception as e:
+                # There was a problem. Let's put the items back in the queue.
+                for event in events:
+                    self._queue_item(event)
+                self._status["es_error"] = str(e)
+                if self.get_state() != DevState.FAULT:
+                    self.set_state(DevState.ALARM)
+                self.update_status()
+                self.error_stream("Exception while sending data to ES: %s" % e)
 
     def _get_index(self, group):
         """
         Generate a date based index name for elasticsearch, on the form
-        'tango--<group>-YYYY.MM.DD'. This is used by Kibana and should also make
+        '<prefix>-<group>-YYYY.MM.DD'. This is used by Kibana and should also make
         it easy to prune old data.
         """
-        date = time.strftime('%Y.%m.%d', time.localtime())
+        date = time.strftime('%Y.%m.%d', datetime.utcnow().utctimetuple())
         index = "tango-{0}-{1}".format(group, date)
         return index
 
@@ -272,10 +199,6 @@ class Logger(Device):
             del item
         else:
             self._status["queue"] = "There are around {0} queued events.".format(self.queue.qsize())
-        if not self.sender.is_alive():
-            self.error_stream("Oops, the sender thread seems to have died! Restarting...")
-            self.start_sender()
-            self._status["thread_restarts"] += 1
         self.update_status()
 
     def update_status(self):
@@ -283,48 +206,58 @@ class Logger(Device):
 
     def _make_status(self):
         status = ["Device is in {0} state.".format(self.get_state())]
-        status.append("Number of events handled: {0}".format(self._status["n_total_events"]))
-        status.append("Number of events written to database: {0}".format(self._status["n_logged_events"]))
-        status.append("Number of failures to write to database: {0}".format(self._status["n_errors"]))
+        # status.append("Sender thread is running: {0}".format(self.sender and self.sender.is_alive()))
+        status.append("Number of events handled: {n_total_events}".format(**self._status))
+        status.append("Number of events written to database: {n_logged_events}".format(**self._status))
+        status.append("Number of failures to write to database: {n_errors}".format(**self._status))
         if self._status["queue"]:
             status.append(self._status["queue"])
         if self._status["es"]:
-            status.append("Elasticsearch status: {0}".format(self._status["es"]))
+            status.append("Elasticsearch status: {es}".format(**self._status))
         if self._status["es_error"]:
-            status.append("Elasticsearch error: {0}".format(self._status["es_error"]))
+            status.append("Elasticsearch error: {es_error}".format(**self._status))
         if self._status["thread_restarts"]:
-            status.append("Internal thread restarted {0} times.").format(self._status["thread_restarts"])
+            status.append("Internal thread restarted {thread_restarts} times.").format(**self._status)
+        if self._status["bad_events"]:
+            status.append("Events that could not be decoded: {0}".format(**self._status))
         return "\n".join(status)
 
-    @DebugIt()
-    @command(dtype_in=[str])
+    @command(dtype_in=[str],
+             doc_in="Format: timestamp, level, device, message, ndc, thread")
     def Log(self, event):
         "Send a Tango log event to Elasticsearch"
+        self.debug_stream("Log(%r)" % event)
         source = dict(zip(EVENT_MEMBERS, event))
-        # Edit the @timestamp value to the source list
-        source["@timestamp"]= int(datetime.datetime.now().strftime("%s"))*1000
-
         if not self.queue.full():
             data = {
                 "_id": str(uuid4()),  # create a unique document ID
                 "_type": "log",
                 "_index": self._get_index("logs"),
-	            "_source": source
+                "_source": source
             }
             self._queue_item(data)
 
-    @DebugIt()
-    @command(dtype_in=str)
+    @command(dtype_in=str, doc_in="JSON encoded PyAlarm event")
     def Alarm(self, event):
         "Send a PyAlarm event to Elasticsearch"
-        source = json.loads(event)
+        self.debug_stream("Alarm(%r)" % event)
+        try:
+            source = json.loads(event)
+        except ValueError as e:
+            self.error_stream("Error decoding alarm event: %s", e)
+            self.debug_stream(event)
+            self._status["bad_events"] += 1
+            return
 
         # we want a @timestamp field for Kibana to work...
         if "timestamp" in source:
-            source["@timestamp"] = int(source.pop("timestamp"))
+            t = source.pop("timestamp")
+            source["@timestamp"] = datetime.utcfromtimestamp(t / 1000)
 
         # make sure there is a priority
-        source["priority"] = ALARM_PRIORITIES.get(str(source["severity"]).upper(), 0)
+        if "priority" not in source:
+            sev = str(source["severity"])
+            source["priority"] = ALARM_PRIORITIES.get(sev.upper(), 0)
 
         # slightly hacky way of making things fit the mapping
         source["values"] = stringify_values(source["values"])
@@ -333,15 +266,16 @@ class Logger(Device):
             "_id": str(uuid4()),  # create a unique document ID
             "_type": "alarm",
             "_index": self._get_index("alarms"),
-            "_source": source
+            "_source": source,
+            "_timestamp": source["@timestamp"]
         }
         self._queue_item(data)
 
-    @command(dtype_in=str)
+    @command(dtype_in=str, doc_in="A message for the fake alarm event")
     def TestAlarm(self, message):
         "Send a test alarm event."
         event = {
-            "@timestamp": int(datetime.datetime.now().strftime("%s"))*1000, #time.time() * 1000,
+            "@timestamp": int(get_utc_now() * 1000),
             "description": message,
             "device": "just/testing/1",
             "formula": "This is a test",
@@ -355,11 +289,15 @@ class Logger(Device):
         }
         self.Alarm(json.dumps(event))
 
-    @command(dtype_in=str)
+    @command(dtype_in=str, doc_in="A message for the fake log event")
     def TestLog(self, message):
         "Send a test log event."
-        event = [str(int(time.time() * 1000)), "DEBUG",  "just/testing/1", message, "0", "0"]
+        event = [str(int(get_utc_now() * 1000)), "DEBUG", "just/testing/1", message, "0", "0"]
         self.Log(event)
+
+    @command
+    def PushQueuedEventsToES(self):
+        self._handle_events()
 
 
 def main():
