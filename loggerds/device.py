@@ -101,7 +101,7 @@ class Logger(Device):
                     self._status["es"] = "Not responding; is it down?"
                 if not self.queue.empty():
                     self._status["n_errors"] += 1
-                self.update_status()
+                # self.update_status()
                 self.error_stream("Elasticsearch did not respond to ping")
                 # self.stopped.wait(self.PushPeriod)
                 return False
@@ -118,13 +118,13 @@ class Logger(Device):
                 self._status["n_errors"] += 1
                 self._status["es_error"] = e
             self.error_stream("Elasticsearch connection error: %r" % e)
-            self.update_status()
+            # self.update_status()
             return False
         else:
             self.set_state(PyTango.DevState.ON)
             self._status["es"] = "OK"
             self._status["es_error"] = None
-            self.update_status()
+            # self.update_status()
             return True
 
     def _handle_events(self):
@@ -132,7 +132,9 @@ class Logger(Device):
         """Check the queue for any arrived events and if any, push them to ES."""
 
         if not self.check_es_communication():
-            self.debug_stream("Skipping push; could not talk to ES")
+            self.debug_stream(
+                "Skipping push; could not talk to ES (~%d events queued)",
+                self.queue.qsize())
             return  # no point in trying to send anything
 
         # Check if there's anything on the queue
@@ -161,12 +163,12 @@ class Logger(Device):
                     self._status["n_errors"] += len(errors)
                     self.error_stream(errors)
                 else:
-                    self.debug_stream("Pushed %d events to ES" % len(inserted))
+                    self.debug_stream("Pushed %d events to ES" % inserted)
                 self._status["n_logged_events"] += inserted
                 if self.get_state() is not DevState.ON:
                     self.set_state(DevState.ON)
                     self._status["es_error"] = None
-                    self.update_status()
+                # self.update_status()
             except Exception as e:
                 # There was a problem. Let's put the items back in the queue.
                 for event in events:
@@ -174,7 +176,7 @@ class Logger(Device):
                 self._status["es_error"] = str(e)
                 if self.get_state() != DevState.FAULT:
                     self.set_state(DevState.ALARM)
-                self.update_status()
+                # self.update_status()
                 self.error_stream("Exception while sending data to ES: %s" % e)
 
     def _get_index(self, group):
@@ -197,7 +199,12 @@ class Logger(Device):
             del item
         else:
             self._status["queue"] = "There are around {0} queued events.".format(self.queue.qsize())
-        self.update_status()
+        # self.update_status()
+
+    def dev_status(self):
+        self.set_status(self._make_status())
+        self._status_str = self.get_status()
+        return self._status_str
 
     def update_status(self):
         self.set_status(self._make_status())
