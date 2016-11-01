@@ -9,10 +9,12 @@ es_mappings = {
                     "type": "date"
                 },
                 "level": {
-                    "type": "string"
+                    "type": "string",
+                    "index": "not_analyzed"
                 },
                 "device": {
-                    "type": "string"
+                    "type": "string",
+                    "index": "not_analyzed"
                 },
                 "message": {
                     "type": "string"
@@ -64,15 +66,12 @@ es_mappings = {
                     "type": "string"
                 },
                 "timestamp": {
-                    "format": "dateOptionalTime",
-                    "type": "date"
+                    "type": "date",
                 },
                 "active_since": {
-                    "format": "dateOptionalTime",
                     "type": "date"
                 },
                 "recovered_at": {
-                    "format": "dateOptionalTime",
                     "type": "date"
                 },
                 "user_comment": {
