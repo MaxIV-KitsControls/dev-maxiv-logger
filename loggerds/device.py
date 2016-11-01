@@ -15,7 +15,8 @@ from mapping import es_mappings
 
 
 EVENT_MEMBERS = ["@timestamp", "level", "device", "message", "ndc", "thread"]
-ALARM_PRIORITIES = {"ALARM": 400, "ERROR": 400, "WARNING": 300, "INFO": 200, "DEBUG": 100}
+ALARM_PRIORITIES = {"ALARM": 400, "ERROR": 400, "WARNING": 300,
+                    "INFO": 200, "DEBUG": 100}
 
 
 def stringify_values(values):
@@ -37,34 +38,33 @@ def get_utc_now():
 
 class Logger(Device):
 
-    """A Tango device whose sole purpose is to wait for someone to tell
+    """
+    A Tango device whose sole purpose is to wait for someone to tell
     it to send things to Elasticsearch. It works as a standard Tango log
-    receiver as well as a specialized PyAlarm receiver.
+    receiver as well as a specialized (Py)Alarm receiver.
 
     It tries to make sure that events aren't lost even if Elasticsearch
-    temporarily goes away.
+    temporarily goes away, by buffering.
     """
 
     __metaclass__ = DeviceMeta
 
-    ElasticsearchHost = device_property(dtype=str,
-                                        default_value="localhost",
-                                        doc="Address of the Elasticsearch host")
-    ElasticsearchIndexPrefix = device_property(dtype=str, default_value="tango",
-                                               doc="Prefix for the ES index names")
-
-    QueueSize = device_property(dtype=int, default_value=1000,
-                                doc="The maximum number of events to buffer.")
-
+    ElasticsearchHost = device_property(
+        dtype=str, default_value="localhost",
+        doc="Address of the Elasticsearch host")
+    ElasticsearchIndexPrefix = device_property(
+        dtype=str, default_value="tango",
+        doc="Prefix for the ES index names")
+    QueueSize = device_property(
+        dtype=int, default_value=10000,
+        doc="The maximum number of events to buffer.")
     PushPeriod = device_property(
         dtype=int, default_value=10,
         doc="Number of seconds of sleep between emptying the queue into ES.")
-    DoNotPush = device_property(dtype=bool, default_value=False,
-                                doc="Don't push data to ES (for debugging)")
-
-    sender = None
 
     def init_device(self):
+
+        self.set_state(DevState.INIT)
 
         self._status = {}  # keep status info for various things
         self._status["n_total_events"] = 0
@@ -86,24 +86,22 @@ class Logger(Device):
 
         self.existing_indices = set()
         # start periodic push to ES
-        if not self.DoNotPush:
-            self.poll_command("PushQueuedEventsToES", int(self.PushPeriod * 1000))
-
-        self.set_state(DevState.INIT)
+        if self.PushPeriod > 0:
+            self.poll_command("PushQueuedEventsToES",
+                              int(self.PushPeriod * 1000))
 
     def check_es_communication(self):
         "Check that we can still talk to ES properly and update state/status"
         try:
             if not self.es.ping():
-                # apparently ES is down so let's just wait; maybe it's just restarting
+                # apparently ES is down so let's just wait;
+                # maybe it's just restarting
                 if self.get_state() is not DevState.FAULT:
                     self.set_state(DevState.ALARM)
                     self._status["es"] = "Not responding; is it down?"
                 if not self.queue.empty():
                     self._status["n_errors"] += 1
-                # self.update_status()
                 self.error_stream("Elasticsearch did not respond to ping")
-                # self.stopped.wait(self.PushPeriod)
                 return False
             else:
                 self.set_state(PyTango.DevState.ON)
@@ -127,9 +125,9 @@ class Logger(Device):
             # self.update_status()
             return True
 
-    def _handle_events(self):
+    def _push_events(self):
 
-        """Check the queue for any arrived events and if any, push them to ES."""
+        "Check the queue for any arrived events and if any, push them to ES."
 
         if not self.check_es_communication():
             self.debug_stream(
@@ -168,7 +166,6 @@ class Logger(Device):
                 if self.get_state() is not DevState.ON:
                     self.set_state(DevState.ON)
                     self._status["es_error"] = None
-                # self.update_status()
             except Exception as e:
                 # There was a problem. Let's put the items back in the queue.
                 for event in events:
@@ -176,14 +173,13 @@ class Logger(Device):
                 self._status["es_error"] = str(e)
                 if self.get_state() != DevState.FAULT:
                     self.set_state(DevState.ALARM)
-                # self.update_status()
                 self.error_stream("Exception while sending data to ES: %s" % e)
 
     def _get_index(self, group):
         """
         Generate a date based index name for elasticsearch, on the form
-        '<prefix>-<group>-YYYY.MM.DD'. This is used by Kibana and should also make
-        it easy to prune old data.
+        '<prefix>-<group>-YYYY.MM.DD'. This is used by Kibana and should
+        also make it easy to prune old data.
         """
         date = time.strftime('%Y.%m.%d', datetime.utcnow().utctimetuple())
         index = "tango-{0}-{1}".format(group, date)
@@ -194,12 +190,13 @@ class Logger(Device):
         try:
             self.queue.put(item, False)
         except Full:
-            self.set_state(DevState.FAULT)
-            self._status["queue"] = "Queue full - losing data!"
-            del item
+            self._push_events()
+            self.warn_stream("Queue full; pushing events")
+
+            self.set_state(DevState.ALARM)
         else:
-            self._status["queue"] = "There are around {0} queued events.".format(self.queue.qsize())
-        # self.update_status()
+            self._status["queue"] = ("There are around {0} queued events."
+                                     .format(self.queue.qsize()))
 
     def dev_status(self):
         self.set_status(self._make_status())
@@ -211,20 +208,22 @@ class Logger(Device):
 
     def _make_status(self):
         status = ["Device is in {0} state.".format(self.get_state())]
-        # status.append("Sender thread is running: {0}".format(self.sender and self.sender.is_alive()))
-        status.append("Number of events handled: {n_total_events}".format(**self._status))
-        status.append("Number of events written to database: {n_logged_events}".format(**self._status))
-        status.append("Number of failures to write to database: {n_errors}".format(**self._status))
+        status.append("Number of events handled: {n_total_events}"
+                      .format(**self._status))
+        status.append("Number of events written to database: {n_logged_events}"
+                      .format(**self._status))
+        status.append("Number of failures to write to database: {n_errors}"
+                      .format(**self._status))
         if self._status["queue"]:
             status.append(self._status["queue"])
         if self._status["es"]:
             status.append("Elasticsearch status: {es}".format(**self._status))
         if self._status["es_error"]:
-            status.append("Elasticsearch error: {es_error}".format(**self._status))
-        if self._status["thread_restarts"]:
-            status.append("Internal thread restarted {thread_restarts} times.").format(**self._status)
+            status.append("Elasticsearch error: {es_error}"
+                          .format(**self._status))
         if self._status["bad_events"]:
-            status.append("Events that could not be decoded: {0}".format(**self._status))
+            status.append("Events that could not be decoded: {0}"
+                          .format(**self._status))
         return "\n".join(status)
 
     @command(dtype_in=[str],
@@ -297,12 +296,13 @@ class Logger(Device):
     @command(dtype_in=str, doc_in="A message for the fake log event")
     def TestLog(self, message):
         "Send a test log event."
-        event = [str(int(get_utc_now() * 1000)), "DEBUG", "just/testing/1", message, "0", "0"]
+        event = [str(int(get_utc_now() * 1000)), "DEBUG", "just/testing/1",
+                 message, "0", "0"]
         self.Log(event)
 
     @command
     def PushQueuedEventsToES(self):
-        self._handle_events()
+        self._push_events()
 
 
 def main():
