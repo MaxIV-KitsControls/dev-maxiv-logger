@@ -35,19 +35,23 @@ es_mappings = {
                     "type": "date"
                 },
                 "alarm_tag": {
-                    "type": "string"
+                    "type": "string",
+                    "index": "not_analyzed"
                 },
                 "description": {
                     "type": "string"
                 },
                 "device": {
-                    "type": "string"
+                    "type": "string",
+                    "index": "not_analyzed"
                 },
                 "formula": {
-                    "type": "string"
+                    "type": "string",
+                    "index": "not_analyzed"
                 },
                 "host": {
-                    "type": "string"
+                    "type": "string",
+                    "index": "not_analyzed"
                 },
                 "instance": {
                     "index": "not_analyzed",  # a random uuid4
@@ -80,10 +84,12 @@ es_mappings = {
                 "values": {
                     "properties": {
                         "attribute": {
-                            "type": "string"
+                            "type": "string",
+                            "index": "not_analyzed"
                         },
                         "value": {
-                            "type": "string"
+                            "type": "string",
+                            "index": "not_analyzed"
                         },
                         "type": {
                             "index": "not_analyzed",  # a python data type
