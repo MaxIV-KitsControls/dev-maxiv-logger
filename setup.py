@@ -2,7 +2,7 @@
 from setuptools import setup
 
 setup(name = "tangods-logger",
-      version = "1.0.0",
+      version = "1.0.1",
       description = "Logger device which logs stuff to Elasticsearch",
       packages = ['loggerds'],
       scripts = ['scripts/loggerds']
