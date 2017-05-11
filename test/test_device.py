@@ -22,11 +22,16 @@ class LoggerTestCase(DeviceTestCase):
     """Test case for power supply device server."""
 
     device = logger.Logger
-    properties = {'ElasticsearchHost': 'test-es-host'}
+    properties = {
+        'ElasticsearchHost': 'test-es-host',
+        'QueueSize': 3,
+        'PushPeriod': 0  # turn off polling for the tests
+    }
 
     @classmethod
     def mocking(cls):
         """Mock elasticsearch and some other modules"""
+        print "mocking"
         cls.Elasticsearch = logger.Elasticsearch = MagicMock()
         cls.es = MagicMock()
         cls.Elasticsearch.return_value = cls.es
@@ -56,7 +61,8 @@ class LoggerTestCase(DeviceTestCase):
 
     def test_checks_if_index_exists(self):
         self.indices.exists.return_value = True
-        event = ["12345", "INFO", "my/test/device", "testing, testing", "wat", "123"]
+        event = ["12345", "INFO", "my/test/device",
+                 "testing, testing", "wat", "123"]
         self.device.Log(event)
         self.device.PushQueuedEventsToES()
         self.indices.exists.assert_called_once_with("tango-logs-2016.04.05")
@@ -64,15 +70,17 @@ class LoggerTestCase(DeviceTestCase):
 
     def test_creates_missing_index(self):
         self.indices.exists.return_value = False
-        event = ["12345", "INFO", "my/test/device", "testing, testing", "wat", "123"]
+        event = ["12345", "INFO", "my/test/device", "testing, testing",
+                 "wat", "123"]
         self.device.Log(event)
         self.device.PushQueuedEventsToES()
-        self.indices.create.assert_called_once_with("tango-logs-2016.04.05",
-                                                    {"mappings": logger.es_mappings["log"]})
+        self.indices.create.assert_called_once_with(
+            "tango-logs-2016.04.05", {"mappings": logger.es_mappings["log"]})
 
     def test_handles_log_event(self):
         self.indices.exists.return_value = True
-        event = ["12345", "INFO", "my/test/device", "testing, testing", "wat", "123"]
+        event = ["12345", "INFO", "my/test/device",
+                 "testing, testing", "wat", "123"]
         self.device.Log(event)
         self.device.PushQueuedEventsToES()
         expected = {
@@ -94,7 +102,8 @@ class LoggerTestCase(DeviceTestCase):
             "alarm_tag": "logger_device_test",
             "severity": "DEBUG",
             "instance": "fisk",
-            "values": [{"attribute": "some/device/1/attribute", "value": 278.5}],
+            "values": [{"attribute": "some/device/1/attribute",
+                        "value": 278.5}],
             "formula": "This is a test"
         }
         self.device.Alarm(json.dumps(event))
@@ -114,8 +123,50 @@ class LoggerTestCase(DeviceTestCase):
                 "severity": "DEBUG",
                 "priority": 100,
                 "instance": "fisk",
-                "values": [{"attribute": "some/device/1/attribute", "value": "278.5", "type": "float"}],
+                "values": [{"attribute": "some/device/1/attribute",
+                            "value": "278.5", "type": "float"}],
                 "formula": "This is a test"
             }
         }
         self.helpers.bulk.assert_called_once_with(self.es, [expected])
+
+    def test_handles_queue_full(self):
+        self.indices.exists.return_value = True
+        event = {
+            "description": "testing, testing",
+            "timestamp": 12345.,
+            "host": "test-host-1",
+            "device": "just/testing/1",
+            "message": "TESTING",
+            "alarm_tag": "logger_device_test",
+            "severity": "DEBUG",
+            "instance": "fisk",
+            "values": [{"attribute": "some/device/1/attribute",
+                        "value": 278.5}],
+            "formula": "This is a test"
+        }
+        expected = {
+            "_id": "uuid4",
+            "_type": "alarm",
+            "_index": "tango-alarms-2016.04.05",
+            "_timestamp": datetime.utcfromtimestamp(12345. / 1000.),
+            "_source": {
+                "description": "testing, testing",
+                "@timestamp": datetime.utcfromtimestamp(12345. / 1000.),
+                "host": "test-host-1",
+                "device": "just/testing/1",
+                "message": "TESTING",
+                "alarm_tag": "logger_device_test",
+                "severity": "DEBUG",
+                "priority": 100,
+                "instance": "fisk",
+                "values": [{"attribute": "some/device/1/attribute",
+                            "value": "278.5", "type": "float"}],
+                "formula": "This is a test"
+            }
+        }
+        self.device.Alarm(json.dumps(event))
+        self.device.Alarm(json.dumps(event))
+        self.device.Alarm(json.dumps(event))
+        self.device.Alarm(json.dumps(event))
+        self.helpers.bulk.assert_called_once_with(self.es, [expected] * 3)
