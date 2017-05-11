@@ -11,8 +11,14 @@ The device reads a few properties:
 
 - *ElasticsearchHost* must contain the hostname of the ES instance/cluster.
 - *ElasticsearchIndexPrefix* is optional and may contain a string prefix for all indices created by the device. The default value is "tango".
-- *QueueSize* also optional, prescribes how many events can be kept in memory before they start to be discarded. Default is 1000. 
-- *PushPeriod* controls the period of pushing data to ES. Default is 10 s. Setting this lower makes ES more up to date, but may be less efficient if there is a lot of traffic. On the other hand, syncing too seldom may lead to queue overflows and possible loss of data.
+- *QueueSize* also optional, prescribes how many events can be kept in memory before they start to be discarded. Default is 1000.
+- *PushPeriod* controls the period of pushing data to ES. Default is 10 s. Setting this lower makes ES more up to date, but may be less efficient if there is a lot of traffic. On the other hand, syncing too seldom will lead to the queue illing up and the device having to push data synchronously. This may be a performance issue.
+
+
+## States ##
+
+- ON the device is working normally
+- ALARM the device is experiencing some problems; perhaps there are intermittent problems with communication, or it may be that the queue
 
 
 ## TANGO logging ##
