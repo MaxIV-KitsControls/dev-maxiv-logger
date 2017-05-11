@@ -20,10 +20,12 @@ es_mappings = {
                     "type": "string"
                 },
                 "ndc": {
-                    "type": "string"  # integer?
+                    "type": "string",  # integer?
+                    "index": "not_analyzed"
                 },
                 "thread": {
-                    "type": "string"  # integer?
+                    "type": "string",  # integer?
+                    "index": "not_analyzed"
                 }
             }
         }

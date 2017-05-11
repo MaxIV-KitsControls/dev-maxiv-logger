@@ -258,6 +258,13 @@ class Logger(Device):
             t = source.pop("timestamp")
             source["@timestamp"] = datetime.utcfromtimestamp(t / 1000)
 
+        # translate other timestamps
+        if "active_since" in source:
+            source["@timestamp"] = datetime.utcfromtimestamp(source["active_since"] / 1000)
+
+        if "recovered_at" in source:
+            source["@timestamp"] = datetime.utcfromtimestamp(source["recovered_at"] / 1000)
+
         # make sure there is a priority
         if "priority" not in source:
             sev = str(source["severity"])
