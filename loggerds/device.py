@@ -151,9 +151,12 @@ class Logger(Device):
                 if index not in self.existing_indices:
                     self.existing_indices.add(index)
                     if not self.es.indices.exists(index):
-                        self.es.indices.create(
-                            index, {"mappings": es_mappings[event["_type"]]})
-                        self.info_stream("Created new index %s" % index)
+                        try:
+                            self.es.indices.create(index, 
+                                {"mappings": es_mappings[event["_type"]]}, ignore=400)
+                            self.info_stream("Created new index %s" % index)
+                        except Exception as e:
+                            self.error_stream(("Error creating index:", str(e))
             try:
                 # send all the events to ES
                 inserted, errors = helpers.bulk(self.es, events)
@@ -277,8 +280,7 @@ class Logger(Device):
             "_id": str(uuid4()),  # create a unique document ID
             "_type": "alarm",
             "_index": self._get_index("alarms"),
-            "_source": source,
-            "_timestamp": source["@timestamp"]
+            "_source": source
         }
         self._queue_item(data)
 
