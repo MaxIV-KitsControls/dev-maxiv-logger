@@ -2,7 +2,7 @@
 
 The Logger device is a TANGO device whose purpose is to store event data in an Elasticsearch database. It is currently able to handle standard TANGO logging messages and PyAlarm alarm messages.
 
-The device writes data in a way that is compatible with Kibana 3 and 4. By default, the indices created are on the forms "tango-logs-2016.04.05" and "tango-alarms-2016.04.05" respectively. A new index is created per day. The "tango" prefix can be configured (see below).
+The device writes data in a way that is compatible with Kibana 6. By default, the indices created are on the forms "tango-logs-YYYY.MM.DD" and "tango-alarms-YYYY.MM.DD" respectively. A new index is created per day. The "tango" prefix can be configured (see below).
 
 
 ## Configuration ##
