@@ -9,23 +9,23 @@ es_mappings = {
                     "type": "date"
                 },
                 "level": {
-                    "type": "string",
-                    "index": "not_analyzed"
+                    "type": "text",
+                    "index": "false"
                 },
                 "device": {
-                    "type": "string",
-                    "index": "not_analyzed"
+                    "type": "text",
+                    "index": "false"
                 },
                 "message": {
-                    "type": "string"
+                    "type": "text"
                 },
                 "ndc": {
-                    "type": "string",  # integer?
-                    "index": "not_analyzed"
+                    "type": "text",  # integer?
+                    "index": "false"
                 },
                 "thread": {
-                    "type": "string",  # integer?
-                    "index": "not_analyzed"
+                    "type": "text",  # integer?
+                    "index": "false"
                 }
             }
         }
@@ -37,39 +37,39 @@ es_mappings = {
                     "type": "date"
                 },
                 "alarm_tag": {
-                    "type": "string",
-                    "index": "not_analyzed"
+                    "type": "text",
+                    "index": "false"
                 },
                 "description": {
-                    "type": "string"
+                    "type": "text"
                 },
                 "device": {
-                    "type": "string",
-                    "index": "not_analyzed"
+                    "type": "text",
+                    "index": "false"
                 },
                 "formula": {
-                    "type": "string",
-                    "index": "not_analyzed"
+                    "type": "text",
+                    "index": "false"
                 },
                 "host": {
-                    "type": "string",
-                    "index": "not_analyzed"
+                    "type": "text",
+                    "index": "false"
                 },
                 "instance": {
-                    "index": "not_analyzed",  # a random uuid4
-                    "type": "string"
+                    "index": "false",  # a random uuid4
+                    "type": "text"
                 },
                 "message": {
-                    "index": "not_analyzed",  # this is e.g. ALARM or RESET
-                    "type": "string"
+                    "index": "false",  # this is e.g. ALARM or RESET
+                    "type": "text"
                 },
                 "priority": {
-                    "index": "not_analyzed",
+                    "index": "false",
                     "type": "integer"
                 },
                 "severity": {
-                    "index": "not_analyzed",  # ALARM, WARNING, INFO, ...
-                    "type": "string"
+                    "index": "false",  # ALARM, WARNING, INFO, ...
+                    "type": "text"
                 },
                 "timestamp": {
                     "type": "date",
@@ -81,21 +81,21 @@ es_mappings = {
                     "type": "date"
                 },
                 "user_comment": {
-                    "type": "string"
+                    "type": "text"
                 },
                 "values": {
                     "properties": {
                         "attribute": {
-                            "type": "string",
-                            "index": "not_analyzed"
+                            "type": "text",
+                            "index": "false"
                         },
                         "value": {
-                            "type": "string",
-                            "index": "not_analyzed"
+                            "type": "text",
+                            "index": "false"
                         },
                         "type": {
-                            "index": "not_analyzed",  # a python data type
-                            "type": "string"
+                            "index": "false",  # a python data type
+                            "type": "text"
                         }
                     }
                 }
